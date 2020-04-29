@@ -11,6 +11,7 @@ class Model(object):
     self.debug = config.debug
     self.config = config
 
+    # fea dim
     self.input_dim = config.input_dim
     self.hidden_dim = config.hidden_dim
     self.num_layers = config.num_layers
@@ -38,7 +39,7 @@ class Model(object):
     ##############
 
     self.is_training = tf.placeholder_with_default(
-        tf.constant(False, dtype=tf.bool),
+        tf.constant(True, dtype=tf.bool),
         shape=(), name='is_training'
     )
 
@@ -96,6 +97,7 @@ class Model(object):
     tf.logging.info("Create a model..")
     self.global_step = tf.Variable(0, trainable=False)
 
+    # hidden_dim filters, each filter dim:[1, input_dim]
     input_embed = tf.get_variable(
         "input_embed", [1, self.input_dim, self.hidden_dim],
         initializer=self.initializer)
@@ -155,6 +157,11 @@ class Model(object):
           self.dec_seq_length, self.hidden_dim,
           self.num_glimpse, batch_size, is_train=True,
           initializer=self.initializer)
+      current_ts = tf.to_int32(tf.minimum(tf.shape(self.dec_targets)[1], tf.shape(self.dec_pred_logits)[1]))
+      self.dec_targets = tf.slice(self.dec_targets, begin=[0, 0], size=[-1, current_ts])
+      self.dec_pred_logits = tf.slice(self.dec_pred_logits, begin=[0, 0, 0], size=[-1, current_ts, -1])
+      self.mask = tf.sequence_mask(lengths=self.enc_seq_length, maxlen=current_ts, dtype=self.dec_pred_logits.dtype)
+
       self.dec_pred_prob = tf.nn.softmax(
           self.dec_pred_logits, 2, name="dec_pred_prob")
       self.dec_pred = tf.argmax(
@@ -162,7 +169,7 @@ class Model(object):
 
     with tf.variable_scope("decoder", reuse=True):
       self.dec_inference_logits, _, _ = decoder_rnn(
-          self.dec_cell, self.first_decoder_input,
+          self.dec_cell, self.embeded_dec_inputs,
           self.enc_outputs, self.enc_final_states,
           self.dec_seq_length, self.hidden_dim,
           self.num_glimpse, batch_size, is_train=False,
@@ -176,8 +183,8 @@ class Model(object):
   def _build_optim(self):
     losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=self.dec_targets, logits=self.dec_pred_logits)
-    inference_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=self.dec_targets, logits=self.dec_inference_logits)
+    # inference_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
+    #     labels=self.dec_targets, logits=self.dec_inference_logits)
 
     def apply_mask(op):
       length = tf.cast(op[:1], tf.int32)
