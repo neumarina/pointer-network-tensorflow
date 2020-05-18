@@ -16,7 +16,7 @@ def add_argument_group(name):
 net_arg = add_argument_group('Network')
 net_arg.add_argument('--hidden_dim', type=int, default=256, help='')
 net_arg.add_argument('--num_layers', type=int, default=1, help='')
-net_arg.add_argument('--input_dim', type=int, default=2, help='')
+net_arg.add_argument('--input_dim', type=int, default=780, help='')
 net_arg.add_argument('--max_enc_length', type=int, default=None, help='')
 net_arg.add_argument('--max_dec_length', type=int, default=None, help='')
 net_arg.add_argument('--init_min_val', type=float, default=-0.08, help='for uniform random initializer')
@@ -26,13 +26,14 @@ net_arg.add_argument('--use_terminal_symbol', type=str2bool, default=True, help=
 
 # Data
 data_arg = add_argument_group('Data')
-data_arg.add_argument('--task', type=str, default='tsp')
-data_arg.add_argument('--batch_size', type=int, default=128)
+data_arg.add_argument('--task', type=str, default='line')
+data_arg.add_argument('--batch_size', type=int, default=696)
 data_arg.add_argument('--min_data_length', type=int, default=5)
-data_arg.add_argument('--max_data_length', type=int, default=11)
-data_arg.add_argument('--train_num', type=int, default=10000)
+data_arg.add_argument('--max_data_length', type=int, default=90)
+data_arg.add_argument('--train_num', type=int, default=66019)
 data_arg.add_argument('--valid_num', type=int, default=10)
-data_arg.add_argument('--test_num', type=int, default=100)
+data_arg.add_argument('--test_num', type=int, default=3474)
+# 3474
 
 # Training / test parameters
 train_arg = add_argument_group('Training')
@@ -43,7 +44,7 @@ train_arg.add_argument('--lr_start', type=float, default=0.001, help='')
 train_arg.add_argument('--lr_decay_step', type=int, default=5000, help='')
 train_arg.add_argument('--lr_decay_rate', type=float, default=0.96, help='')
 train_arg.add_argument('--max_grad_norm', type=float, default=2.0, help='')
-train_arg.add_argument('--checkpoint_secs', type=int, default=300, help='')
+train_arg.add_argument('--checkpoint_secs', type=int, default=600, help='')
 
 # Misc
 misc_arg = add_argument_group('Misc')
@@ -54,9 +55,11 @@ misc_arg.add_argument('--log_dir', type=str, default='logs')
 misc_arg.add_argument('--data_dir', type=str, default='data')
 misc_arg.add_argument('--output_dir', type=str, default='outputs')
 misc_arg.add_argument('--load_path', type=str, default='')
+# line_2020-05-06_16-36-42
 misc_arg.add_argument('--debug', type=str2bool, default=False)
 misc_arg.add_argument('--gpu_memory_fraction', type=float, default=1.0)
 misc_arg.add_argument('--random_seed', type=int, default=123, help='')
+# misc_arg.add_argument('--model_dir', type=str, default='logs/line_2020-05-06_16-36-42')
 
 def get_config():
   config, unparsed = parser.parse_known_args()

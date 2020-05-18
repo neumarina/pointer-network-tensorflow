@@ -13,16 +13,11 @@ import tensorflow as tf
 from download import download_file_from_google_drive
 
 GOOGLE_DRIVE_IDS = {
-    'tsp5_train.zip': '0B2fg8yPGn2TCSW1pNTJMXzFPYTg',
-    'tsp10_train.zip': '0B2fg8yPGn2TCbHowM0hfOTJCNkU',
-    'tsp5-20_train.zip': '0B2fg8yPGn2TCTWNxX21jTDBGeXc',
-    'tsp50_train.zip': '0B2fg8yPGn2TCaVQxSl9ab29QajA',
-    'tsp20_test.txt': '0B2fg8yPGn2TCdF9TUU5DZVNCNjQ',
-    'tsp40_test.txt': '0B2fg8yPGn2TCcjFrYk85SGFVNlU',
-    'tsp50_test.txt.zip': '0B2fg8yPGn2TCUVlCQmQtelpZTTQ',
+    'line90_train.txt': '',
+    'line90_test.txt': ''
 }
 
-TSP = namedtuple('TSP', ['x', 'y', 'name'])
+TSP = namedtuple('TSP', ['x', 'y', 'name', 'ds', 'origin_code', 'dest_code', 'save_keys'])
 
 def length(x, y):
   return np.linalg.norm(np.asarray(x) - np.asarray(y))
@@ -48,17 +43,24 @@ def generate_one_example(n_nodes, rng):
   solutions = solve_tsp_dynamic(nodes)
   return nodes, solutions
 
-def read_paper_dataset(paths, max_length):
-  x, y = [], []
+def read_paper_dataset(paths, max_length, fea_dim):
+  x, y, ds, origin_code, dest_code, save_keys = [], [], [], [], [], []
   for path in paths:
     tf.logging.info("Read dataset {} which is used in the paper..".format(path))
     length = max(re.findall('\d+', path))
     with open(path) as f:
       for l in tqdm(f):
-        inputs, outputs = l.split(' output ')
-        x.append(np.array(inputs.split(), dtype=np.float32).reshape([-1, 2]))
-        y.append(np.array(outputs.split(), dtype=np.int32)[:-1]) # skip the last one
-  return x, y
+        tmp_ = l.split('\t')
+        # if tmp_[1] in ('610088', '200082', '515450'): # and tmp_[2] in ('330060'):  # ,'330060','250500','130090'
+        l_ = tmp_[3]
+        inputs, outputs = l_.split(' output ')
+        x.append(np.array(inputs.split(), dtype=np.float32).reshape([-1, fea_dim]))
+        y.append(np.array(outputs.split(), dtype=np.int32)[:])
+        ds.append([tmp_[0]])
+        origin_code.append([tmp_[1]])
+        dest_code.append([tmp_[2]])
+        save_keys.append([tmp_[3]])
+  return x, y, ds, origin_code, dest_code, save_keys
 
 class TSPDataLoader(object):
   def __init__(self, config, rng=None):
@@ -69,6 +71,7 @@ class TSPDataLoader(object):
     self.batch_size = config.batch_size
     self.min_length = config.min_data_length
     self.max_length = config.max_data_length
+    self.input_dim = config.input_dim
 
     self.is_train = config.is_train
     self.use_terminal_symbol = config.use_terminal_symbol
@@ -88,6 +91,9 @@ class TSPDataLoader(object):
     self.input_ops, self.target_ops = None, None
     self.queue_ops, self.enqueue_ops = None, None
     self.x, self.y, self.seq_length, self.mask = None, None, None, None
+    self.ds, self.o, self.d, self.save_keys = None, None, None, None
+    self.ds_ops, self.o_ops, self.d_ops, self.save_keys_ops = None, None, None, None
+
 
     paths = self.download_google_drive_file()
     if len(paths) != 0:
@@ -102,10 +108,17 @@ class TSPDataLoader(object):
     self.input_ops, self.target_ops = {}, {}
     self.queue_ops, self.enqueue_ops = {}, {}
     self.x, self.y, self.seq_length, self.mask = {}, {}, {}, {}
+    self.ds, self.o, self.d, self.save_keys = {}, {}, {}, {}
+    self.ds_ops, self.o_ops, self.d_ops, self.save_keys_ops = {}, {}, {}, {}
 
     for name in self.data_num.keys():
       self.input_ops[name] = tf.placeholder(tf.float32, shape=[None, None])
       self.target_ops[name] = tf.placeholder(tf.int32, shape=[None])
+      self.ds_ops[name] = tf.placeholder(tf.string, shape=[1])
+      self.o_ops[name] = tf.placeholder(tf.string, shape=[1])
+      self.d_ops[name] = tf.placeholder(tf.string, shape=[1])
+      self.save_keys_ops[name] = tf.placeholder(tf.string, shape=[1])
+
 
       min_after_dequeue = 1000
       capacity = min_after_dequeue + 3 * self.batch_size
@@ -113,14 +126,15 @@ class TSPDataLoader(object):
       self.queue_ops[name] = tf.RandomShuffleQueue(
           capacity=capacity,
           min_after_dequeue=min_after_dequeue,
-          dtypes=[tf.float32, tf.int32],
-          shapes=[[self.max_length, 2,], [self.max_length]],
+          dtypes=[tf.float32, tf.int32, tf.string, tf.string, tf.string, tf.string],
+          shapes=[[self.max_length, self.input_dim,], [self.max_length], [1], [1], [1], [1]],
           seed=self.random_seed,
           name="random_queue_{}".format(name))
       self.enqueue_ops[name] = \
-          self.queue_ops[name].enqueue([self.input_ops[name], self.target_ops[name]])
+          self.queue_ops[name].enqueue([self.input_ops[name], self.target_ops[name],
+                                        self.ds_ops[name], self.o_ops[name], self.d_ops[name], self.save_keys_ops[name]])
 
-      inputs, labels = self.queue_ops[name].dequeue()
+      inputs, labels, aux_ds, aux_o, aux_d, aux_save_keys = self.queue_ops[name].dequeue()
 
       seq_length = tf.shape(inputs)[0]
       if self.use_terminal_symbol:
@@ -128,9 +142,10 @@ class TSPDataLoader(object):
       else:
         mask = tf.ones([seq_length], dtype=tf.float32)
 
-      self.x[name], self.y[name], self.seq_length[name], self.mask[name] = \
+      self.x[name], self.y[name], self.seq_length[name], self.mask[name], \
+      self.ds[name], self.o[name], self.d[name], self.save_keys[name] = \
           tf.train.batch(
-              [inputs, labels, seq_length, mask],
+              [inputs, labels, seq_length, mask, aux_ds, aux_o, aux_d, aux_save_keys],
               batch_size=self.batch_size,
               capacity=capacity,
               dynamic_pad=True,
@@ -141,23 +156,29 @@ class TSPDataLoader(object):
     self.coord = tf.train.Coordinator()
 
     for name in self.data_num.keys():
-      def load_and_enqueue(sess, name, input_ops, target_ops, enqueue_ops, coord):
+      def load_and_enqueue(sess, name, input_ops, target_ops, ds_ops, o_ops, d_ops, save_keys_ops, enqueue_ops, coord):
         idx = 0
         while not coord.should_stop():
           feed_dict = {
               input_ops[name]: self.data[name].x[idx],
               target_ops[name]: self.data[name].y[idx],
+              ds_ops[name]: self.data[name].ds[idx],
+              o_ops[name]: self.data[name].origin_code[idx],
+              d_ops[name]: self.data[name].dest_code[idx],
+              save_keys_ops[name]: self.data[name].save_keys[idx],
           }
-          sess.run(self.enqueue_ops[name], feed_dict=feed_dict)
+          sess.run(enqueue_ops[name], feed_dict=feed_dict)
           idx = idx+1 if idx+1 <= len(self.data[name].x) - 1 else 0
 
-      args = (sess, name, self.input_ops, self.target_ops, self.enqueue_ops, self.coord)
+      args = (sess, name, self.input_ops, self.target_ops, self.ds_ops, self.o_ops, self.d_ops, self.save_keys_ops, self.enqueue_ops, self.coord)
       t = threading.Thread(target=load_and_enqueue, args=args)
       t.start()
       self.threads.append(t)
       tf.logging.info("Thread for [{}] start".format(name))
 
-  def stop_input_queue(self):
+  def stop_input_queue(self, sess):
+    # for name in self.data_num.keys():
+    #   sess.run(self.queue_ops[name].close(cancel_pending_enqueues=True))
     self.coord.request_stop()
     self.coord.join(self.threads)
     tf.logging.info("All threads stopped")
@@ -174,7 +195,7 @@ class TSPDataLoader(object):
       if not os.path.exists(path):
         tf.logging.info("Creating {} for [{}]".format(path, self.task))
 
-        x = np.zeros([num, self.max_length, 2], dtype=np.float32)
+        x = np.zeros([num, self.max_length, self.input_dim], dtype=np.float32)
         y = np.zeros([num, self.max_length], dtype=np.int32)
 
         for idx in trange(num, desc="Create {} data".format(name)):
@@ -227,9 +248,9 @@ class TSPDataLoader(object):
     else:
       paths = [path]
 
-    x_list, y_list = read_paper_dataset(paths, self.max_length)
+    x_list, y_list, ds_list, o_list, d_list, save_keys_list = read_paper_dataset(paths, self.max_length, self.input_dim)
 
-    x = np.zeros([len(x_list), self.max_length, 2], dtype=np.float32)
+    x = np.zeros([len(x_list), self.max_length, self.input_dim], dtype=np.float32)
     y = np.zeros([len(y_list), self.max_length], dtype=np.int32)
 
     for idx, (nodes, res) in enumerate(tqdm(zip(x_list, y_list))):
@@ -240,4 +261,4 @@ class TSPDataLoader(object):
       self.data = {}
 
     tf.logging.info("Update [{}] data with {} used in the paper".format(name, path))
-    self.data[name] = TSP(x=x, y=y, name=name)
+    self.data[name] = TSP(x=x, y=y, name=name, ds=ds_list, origin_code=o_list, dest_code=d_list, save_keys=save_keys_list)

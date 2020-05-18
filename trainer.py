@@ -21,8 +21,9 @@ class Trainer(object):
     self.max_step = config.max_step
     self.num_log_samples = config.num_log_samples
     self.checkpoint_secs = config.checkpoint_secs
+    self.batch_size = config.batch_size
 
-    if config.task.lower().startswith('tsp'):
+    if config.task.lower().startswith('line'):
       self.data_loader = TSPDataLoader(config, rng=self.rng)
     else:
       raise Exception("[!] Unknown task: {}".format(config.task))
@@ -31,6 +32,10 @@ class Trainer(object):
         config,
         inputs=self.data_loader.x,
         labels=self.data_loader.y,
+        ds=self.data_loader.ds,
+        o=self.data_loader.o,
+        d=self.data_loader.d,
+        save_keys=self.data_loader.save_keys,
         enc_seq_length=self.data_loader.seq_length,
         dec_seq_length=self.data_loader.seq_length,
         mask=self.data_loader.mask)
@@ -40,6 +45,15 @@ class Trainer(object):
 
   def build_session(self):
     self.saver = tf.train.Saver()
+
+    # ckpt = tf.train.get_checkpoint_state(self.model_dir)
+    #
+    # # Define an init function that loads the pretrained checkpoint.
+    # def load_pretrain(sess):
+    #     self.saver.restore(sess, ckpt.model_checkpoint_path)
+    # ,
+    #                              init_fn=load_pretrain
+
     self.summary_writer = tf.summary.FileWriter(self.model_dir)
 
     sv = tf.train.Supervisor(logdir=self.model_dir,
@@ -75,31 +89,42 @@ class Trainer(object):
 
       summary_writer = self._get_summary_writer(result)
 
-    self.data_loader.stop_input_queue()
+    self.data_loader.stop_input_queue(self.sess)
 
   def test(self):
     tf.logging.info("Testing starts...")
     self.data_loader.run_input_queue(self.sess)
 
-    for idx in range(10):
+    for idx in range(1):
       self._test(None)
 
-    self.data_loader.stop_input_queue()
+    self.data_loader.stop_input_queue(self.sess)
 
   def _test(self, summary_writer):
     fetch = {
         'loss': self.model.total_inference_loss,
         'pred': self.model.dec_inference,
         'true': self.model.dec_targets,
+        'input_x': self.model.enc_inputs,
+        'input_ds': self.model.aux_ds,
+        'input_o': self.model.aux_o,
+        'input_d': self.model.aux_d,
+        'input_save_keys': self. model.aux_save_keys,
     }
     result = self.model.test(self.sess, fetch, summary_writer)
 
     tf.logging.info("")
     tf.logging.info("test loss: {}".format(result['loss']))
-    for idx in range(self.num_log_samples):
-      pred, true = result['pred'][idx], result['true'][idx]
-      tf.logging.info("test pred: {}".format(pred))
-      tf.logging.info("test true: {} ({})".format(true, np.array_equal(pred, true)))
+    fo = open('data/output.txt', 'w')
+    for idx in range(len(result['pred'])):
+      pred, true, input_x, input_ds, input_o, input_d, input_save_keys = result['pred'][idx], result['true'][idx], result['input_x'][idx], result['input_ds'][idx], result['input_o'][idx], result['input_d'][idx], result['input_save_keys'][idx]
+      fo.write(';'.join([input_ds, input_o, input_d, str(input_x), str(true), str(pred), np.array_equal(pred, true), input_save_keys]))
+      if not np.array_equal(pred, true):
+        tf.logging.info("test pred: {}".format(pred))
+        tf.logging.info("test true: {} ({})".format(true, np.array_equal(pred, true)))
+
+    accy_ = [np.array_equal(result['pred'][idx], result['true'][idx]) for idx in range(len(result['true']))]
+    tf.logging.info("accuracy: {}; len: {}".format(np.sum(accy_, dtype=np.float32)/len(accy_), len(accy_)))
 
     if summary_writer:
       summary_writer.add_summary(result['summary'], result['step'])

@@ -7,12 +7,13 @@ from config import get_config
 from utils import prepare_dirs_and_logger, save_config
 
 config = None
+tf.logging.set_verbosity(tf.logging.INFO)
 
 def main(_):
   prepare_dirs_and_logger(config)
 
-  if not config.task.lower().startswith('tsp'):
-    raise Exception("[!] Task should starts with TSP")
+  if not config.task.lower().startswith('line'):
+    raise Exception("[!] Task should starts with line")
 
   if config.max_enc_length is None:
     config.max_enc_length = config.max_data_length
@@ -35,5 +36,6 @@ def main(_):
   tf.logging.info("Run finished.")
 
 if __name__ == "__main__":
+
   config, unparsed = get_config()
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)

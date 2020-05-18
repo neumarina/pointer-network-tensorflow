@@ -5,7 +5,7 @@ from layers import *
 
 class Model(object):
   def __init__(self, config, 
-               inputs, labels, enc_seq_length, dec_seq_length, mask,
+               inputs, labels, ds, o, d, save_keys, enc_seq_length, dec_seq_length, mask,
                reuse=False, is_critic=False):
     self.task = config.task
     self.debug = config.debug
@@ -43,13 +43,14 @@ class Model(object):
         shape=(), name='is_training'
     )
 
-    self.enc_inputs, self.dec_targets, self.enc_seq_length, self.dec_seq_length, self.mask = \
+    self.enc_inputs, self.dec_targets, self.enc_seq_length, self.dec_seq_length, self.mask, \
+    self.aux_ds, self.aux_o, self.aux_d, self.aux_save_keys = \
         smart_cond(
             self.is_training,
             lambda: (inputs['train'], labels['train'], enc_seq_length['train'],
-                     dec_seq_length['train'], mask['train']),
+                     dec_seq_length['train'], mask['train'], ds['train'], o['train'], d['train'], save_keys['train']),
             lambda: (inputs['test'], labels['test'], enc_seq_length['test'],
-                     dec_seq_length['test'], mask['test'])
+                     dec_seq_length['test'], mask['test'], ds['test'], o['test'], d['test'], save_keys['test'])
         )
 
     if self.use_terminal_symbol:
@@ -76,7 +77,7 @@ class Model(object):
       if summary is not None:
         fetch['summary'] = summary
 
-      result = sess.run(fetch)
+      result = sess.run(fetch, feed_dict=feed_dict)
       if summary_writer is not None:
         summary_writer.add_summary(result['summary'], result['step'])
         summary_writer.flush()
@@ -157,6 +158,7 @@ class Model(object):
           self.dec_seq_length, self.hidden_dim,
           self.num_glimpse, batch_size, is_train=True,
           initializer=self.initializer)
+
       current_ts = tf.to_int32(tf.minimum(tf.shape(self.dec_targets)[1], tf.shape(self.dec_pred_logits)[1]))
       self.dec_targets = tf.slice(self.dec_targets, begin=[0, 0], size=[-1, current_ts])
       self.dec_pred_logits = tf.slice(self.dec_pred_logits, begin=[0, 0, 0], size=[-1, current_ts, -1])
@@ -175,6 +177,12 @@ class Model(object):
           self.num_glimpse, batch_size, is_train=False,
           initializer=self.initializer,
           max_length=self.max_dec_length + int(self.use_terminal_symbol))
+
+      test_current_ts = tf.to_int32(tf.minimum(tf.shape(self.dec_targets)[1], tf.shape(self.dec_inference_logits)[1]))
+      self.dec_targets = tf.slice(self.dec_targets, begin=[0, 0], size=[-1, current_ts])
+      self.dec_inference_logits = tf.slice(self.dec_inference_logits, begin=[0, 0, 0], size=[-1, test_current_ts, -1])
+      self.mask = tf.sequence_mask(lengths=self.enc_seq_length, maxlen=test_current_ts, dtype=self.dec_inference_logits.dtype)
+
       self.dec_inference_prob = tf.nn.softmax(
           self.dec_inference_logits, 2, name="dec_inference_logits")
       self.dec_inference = tf.argmax(
@@ -183,8 +191,10 @@ class Model(object):
   def _build_optim(self):
     losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
         labels=self.dec_targets, logits=self.dec_pred_logits)
-    # inference_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
-    #     labels=self.dec_targets, logits=self.dec_inference_logits)
+    inference_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=self.dec_targets, logits=self.dec_inference_logits)
+    # accy = (self.dec_inference)
+    # np.array_equal(pred, true)
 
     def apply_mask(op):
       length = tf.cast(op[:1], tf.int32)
@@ -196,7 +206,7 @@ class Model(object):
         tf.reduce_sum(self.mask), name="batch_loss")
 
     batch_inference_loss = tf.div(
-        tf.reduce_sum(tf.multiply(losses, self.mask)),
+        tf.reduce_sum(tf.multiply(inference_losses, self.mask)),
         tf.reduce_sum(self.mask), name="batch_inference_loss")
 
     tf.losses.add_loss(batch_loss)

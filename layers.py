@@ -100,6 +100,7 @@ def decoder_rnn(cell, inputs,
       else:
         elements_finished = tf.greater(time, seq_length)
 
+
       all_finished = tf.reduce_all(elements_finished)
       pad_step_embedded = tf.zeros([batch_size, hidden_dim], dtype=tf.float32)
       next_inputs = tf.cond(all_finished, lambda: pad_step_embedded, lambda: input_fn(sample_ids))
